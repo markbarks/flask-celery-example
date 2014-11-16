@@ -1,44 +1,51 @@
 from __future__ import absolute_import
+from importlib import import_module
 from os import path, environ
 import json
-from flask import Flask, Blueprint, abort, jsonify, request, session
+import os
+from flask import Flask, Blueprint, abort, jsonify, request, session, make_response
+import sys
 import settings
 from celery import Celery
 
 app = Flask(__name__)
 app.config.from_object(settings)
 
+
 def make_celery(app):
     celery = Celery(app.import_name, broker=app.config['CELERY_BROKER_URL'])
     celery.conf.update(app.config)
     TaskBase = celery.Task
+
     class ContextTask(TaskBase):
         abstract = True
+
         def __call__(self, *args, **kwargs):
             with app.app_context():
                 return TaskBase.__call__(self, *args, **kwargs)
+
     celery.Task = ContextTask
     return celery
 
+
 celery = make_celery(app)
 
-@celery.task(name="tasks.add")
-def add(x, y):
-    return x + y
 
-@app.route("/test")
-def hello_world(x=16, y=16):
-    x = int(request.args.get("x", x))
-    y = int(request.args.get("y", y))
-    res = add.apply_async((x, y))
-    context = {"id": res.task_id, "x": x, "y": y}
-    result = "add((x){}, (y){})".format(context['x'], context['y'])
-    goto = "{}".format(context['id'])
-    return jsonify(result=result, goto=goto)
+@celery.task(name="tasks.start_script")
+def start_script(script):
+    s = import_module('scripts.' + script)
+    return s.run()
 
-@app.route("/test/result/<task_id>")
-def show_result(task_id):
-    retval = add.AsyncResult(task_id).get(timeout=1.0)
+
+@app.route("/script/<script>/")
+def script(script):
+    res = start_script.apply_async(script, )
+    return make_response('<a href="http://localhost:5000/script/result/' + res.task_id + '">result</a>')
+
+
+@app.route("/script/result/<task_id>")
+def show_script_result(task_id):
+    retval = start_script.AsyncResult(task_id).get(timeout=1.0)
     return repr(retval)
 
 

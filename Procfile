@@ -1,0 +1,1 @@
+PYTHONPATH=. celery -A app.celery worker --autoreload --beat
